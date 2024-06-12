@@ -28,10 +28,10 @@ type ModuleData struct {
 
 // ArgsGetScanTask contains meta data of a scan agent requesting scan targets
 type ArgsGetScanTask struct {
-	AgentInfo                    // Identifying scan agent information to distinguish scan agent instances for informational purposes
-	ScopeSecret string           // Scan scope secret to authenticate/associate this scan result to
-	ModuleData  []ModuleData     // List of already running modules on the agent
-	SystemData  utils.SystemData // Some system information, like CPU load,...
+	AgentInfo                     // Identifying scan agent information to distinguish scan agent instances for informational purposes
+	ScopeSecrets []string         // Scan scope secrets to authenticate/associate this scan result to
+	ModuleData   []ModuleData     // List of already running modules on the agent
+	SystemData   utils.SystemData // Some system information, like CPU load,...
 }
 
 // ArgsSaveScanResult contains meta data about a scan result and the result data itself, sent by a scan agent

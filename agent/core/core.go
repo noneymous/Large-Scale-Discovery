@@ -14,8 +14,15 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/Pallinder/go-randomdata"
-	"github.com/orcaman/concurrent-map/v2"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/siemens/GoScans/ssl"
 	scanUtils "github.com/siemens/GoScans/utils"
 	"github.com/siemens/Large-Scale-Discovery/_build"
@@ -23,11 +30,6 @@ import (
 	broker "github.com/siemens/Large-Scale-Discovery/broker/core"
 	"github.com/siemens/Large-Scale-Discovery/log"
 	"github.com/siemens/Large-Scale-Discovery/utils"
-	"math/big"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
 )
 
 const taskRequestInterval = time.Second * 5 // Interval in which to ask the broker for new scan tasks
@@ -39,7 +41,8 @@ var shutdownOnce sync.Once                                                // Hel
 var instanceName string                                                   // Agent instance name, randomly generated to be (most likely) unique
 var instanceIp string                                                     // Agent IP at the default gateway used for scanning
 var instanceHostname string                                               // Agent hostname used for scanning
-var scopeSecret string                                                    // Scope secret to authenticate/associate the agent with a certain scan scope during RPC requests
+var scopeSecret string                                                    // Scope secret to associate the agent with a certain scan scope during RPC requests
+var scopeSecrets []string                                                 // Avaliable scope secrets
 var moduleInstances = cmap.New[int]()                                     // Concurrent map holding the total number of running scans for each module
 var rpcClient *utils.Client                                               // RPC client struct handling RPC connections and requests
 var sysMon *utils.SystemMonitor                                           // Monitoring service collecting information about system utilization, e.g. CPU, memory,...)
@@ -77,13 +80,20 @@ func Init() error {
 	}
 
 	// Initialize attributes
-	scopeSecret = conf.ScopeSecret
+	scopeSecrets = conf.ScopeSecrets
 
 	// Log agent attributes
 	logger.Infof("Agent Name  : %s", instanceName)
 	logger.Infof("Agent Host  : %s", instanceHostname)
 	logger.Infof("Agent IP    : %s", instanceIp)
-	logger.Infof("Scope Secret: %s...", scopeSecret[0:5])
+	cutScopeSecrets := []string{}
+	for _, secret := range scopeSecrets {
+		if len(secret) > 5 {
+			secret = secret[:5]
+		}
+		cutScopeSecrets = append(cutScopeSecrets, secret)
+	}
+	logger.Infof("Scope Secrets:  %s...", strings.Join(cutScopeSecrets, "..., "))
 
 	// Prepare RPC certificate path
 	rpcRemoteCrt := filepath.Join("keys", "broker.crt")
@@ -311,9 +321,9 @@ func scanTaskLoader(wg *sync.WaitGroup, chOut chan broker.ScanTask) {
 				Host: instanceHostname,
 				Ip:   instanceIp,
 			},
-			ScopeSecret: scopeSecret,
-			ModuleData:  moduleData,
-			SystemData:  systemData,
+			ScopeSecrets: scopeSecrets,
+			ModuleData:   moduleData,
+			SystemData:   systemData,
 		}
 
 		// Send RPC request for scan targets

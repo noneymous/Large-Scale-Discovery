@@ -13,12 +13,13 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"sync"
+
 	scanUtils "github.com/siemens/GoScans/utils"
 	"github.com/siemens/Large-Scale-Discovery/_build"
 	"github.com/siemens/Large-Scale-Discovery/log"
 	"go.uber.org/zap/zapcore"
-	"os"
-	"sync"
 )
 
 var agentConfig = &AgentConfig{} // Global configuration
@@ -137,16 +138,16 @@ func defaultAgentConfigFactory() AgentConfig {
 	logging.Smtp.Connector.Subject = "Agent Error Log"
 
 	// Prepare default settings for development
-	scopeSecret := ""
+	var scopeSecret []string
 	if _build.DevMode {
-		scopeSecret = "dev_secret"
+		scopeSecret = []string{"dev_secret"}
 		logging.Console.Level = zapcore.DebugLevel
 	}
 
 	// Prepare default agent config
 	conf := AgentConfig{
 		BrokerAddress:  "localhost:3333",
-		ScopeSecret:    scopeSecret,
+		ScopeSecrets:   scopeSecret,
 		Paths:          templatePaths,
 		Authentication: templateAuthentication,
 		Logging:        logging,
@@ -311,7 +312,7 @@ func (m *ModuleWebcrawler) UnmarshalJSON(b []byte) error {
 type AgentConfig struct {
 	// The root configuration object tying all configuration segments together.
 	BrokerAddress  string         `json:"broker_address"`
-	ScopeSecret    string         `json:"scope_secret"`
+	ScopeSecrets   []string       `json:"scope_secret"`
 	Paths          Paths          `json:"paths"`
 	Authentication Authentication `json:"authentication"`
 	Logging        log.Settings   `json:"logging"`
@@ -321,7 +322,14 @@ type AgentConfig struct {
 func (c *AgentConfig) UnmarshalJSON(b []byte) error {
 
 	// Prepare temporary auxiliary data structure to load raw Json data
-	type aux AgentConfig
+	type aux struct {
+		BrokerAddress  string         `json:"broker_address"`
+		ScopeSecret    interface{}    `json:"scope_secret"`
+		Paths          Paths          `json:"paths"`
+		Authentication Authentication `json:"authentication"`
+		Logging        log.Settings   `json:"logging"`
+		Modules        Modules        `json:"modules"`
+	}
 	var raw aux
 
 	// Unmarshal serialized Json into temporary auxiliary structure
@@ -330,13 +338,31 @@ func (c *AgentConfig) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	// Do input validation
-	if raw.ScopeSecret == "" || len(raw.ScopeSecret) < 10 {
-		return fmt.Errorf("invalid scope secret")
+	// Do input validation for ScopeSecret and check type
+	switch v := raw.ScopeSecret.(type) {
+	case string:
+		if v == "" || len(v) < 10 {
+			return fmt.Errorf("invalid scope secret")
+		}
+		c.ScopeSecrets = []string{v} // If it's a string, save it as a list of one string
+	case []interface{}:
+		for _, item := range v {
+			str, ok := item.(string)
+			if !ok || str == "" || len(str) < 10 {
+				return fmt.Errorf("invalid scope secret")
+			}
+			c.ScopeSecrets = append(c.ScopeSecrets, str)
+		}
+	default:
+		return fmt.Errorf("invalid type for scope secret")
 	}
 
 	// Update struct with de-serialized values
-	*c = AgentConfig(raw)
+	c.BrokerAddress = raw.BrokerAddress
+	c.Paths = raw.Paths
+	c.Authentication = raw.Authentication
+	c.Logging = raw.Logging
+	c.Modules = raw.Modules
 
 	// Return nil as everything went fine
 	return nil
