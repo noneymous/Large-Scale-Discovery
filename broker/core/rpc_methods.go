@@ -14,6 +14,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/lithammer/shortuuid/v4"
 	"github.com/siemens/GoScans/banner"
 	"github.com/siemens/GoScans/discovery"
@@ -32,10 +38,6 @@ import (
 	"github.com/siemens/Large-Scale-Discovery/utils"
 	"github.com/vburenin/nsync"
 	"gorm.io/gorm"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 var scopeModuleLock = nsync.NewNamedMutex() // Named mutex to prevent parallel changes on the same scope and module data
@@ -60,16 +62,39 @@ func (s *Broker) RequestScanTasks(rpcArgs *ArgsGetScanTask, rpcReply *ReplyGetSc
 		logger.Debugf("RPC call took %s.", time.Since(start))
 	}()
 
-	// Get scan scope data by secret (will be taken from memory, if available).
-	scanScope, errScanScope := getScanScope(logger, rpcArgs.ScopeSecret)
-	if errors.Is(errScanScope, errInvalidScopeSecret) {
-		return errScanScope // Let the scan agent know that the secret was invalid
-	} else if errors.Is(errScanScope, errScopeNotAvailable) {
-		return nil // Pretend there are currently no scan tasks available
-	} else if scanScope == nil {
-		logger.Warningf("Scan scope should be available but is not.")
-		return nil
+	var validScanScopes []*managerdb.T_scan_scope
+	// Iterate over the full list of scope secrets and return a list of valid ones
+	for _, secret := range rpcArgs.ScopeSecrets {
+		scanScope, errScanScope := getScanScope(logger, secret)
+		if errScanScope != nil {
+			if errors.Is(errScanScope, errInvalidScopeSecret) {
+				logger.Debugf("Scan scope '%s' not valid", secret)
+				return errScanScope
+			} else if errors.Is(errScanScope, errScopeNotAvailable) {
+				logger.Debugf("Scan scope '%s' not available", secret)
+			} else if errScanScope == nil {
+				logger.Warningf("Scan scope '%s' should be available but is not.", secret)
+			}
+		} else {
+			validScanScopes = append(validScanScopes, scanScope)
+		}
 	}
+
+	// Strategy for choosing the most suitable scan scope can be implemented here
+	var minSize uint = math.MaxUint32
+	var selectedScanScope *managerdb.T_scan_scope
+	if len(validScanScopes) > 0 {
+		for _, scope := range validScanScopes {
+			if scope.Size < minSize {
+				minSize = scope.Size
+				selectedScanScope = scope
+			}
+		}
+	} else {
+		logger.Debugf("No valid scan scope available")
+		return errScopeNotAvailable
+	}
+	scanScope := selectedScanScope
 
 	// Log action
 	logger.Infof(
